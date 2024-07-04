@@ -43,6 +43,7 @@ export default function Home() {
   useEffect(() => {
     fetchHabits();
     fetchCompletions();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const fetchHabits = async () => {
@@ -121,10 +122,10 @@ export default function Home() {
   };
   const incrementCompletion = async (habitId: string) => {
     const today = new Date().toISOString().split("T")[0];
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
-    if (!user) {
+    const { data: userData, error: userError } = await supabase.auth.getUser();
+    const user = userData?.user;
+
+    if (userError || !user) {
       console.error("User not authenticated");
       return;
     }
@@ -162,7 +163,7 @@ export default function Home() {
             user_id: user.id,
             completion_date: today,
             count: 1,
-            target_count: habit.target_count, // Include target count
+            target_count: habit.target_count,
           },
         ])
         .select();
@@ -270,7 +271,7 @@ export default function Home() {
   );
 }
 
-function CalendarIcon(props) {
+function CalendarIcon(props: React.SVGProps<SVGSVGElement>) {
   return (
     <svg
       {...props}
@@ -292,7 +293,7 @@ function CalendarIcon(props) {
   );
 }
 
-function CheckIcon(props) {
+function CheckIcon(props: React.SVGProps<SVGSVGElement>) {
   return (
     <svg
       {...props}
@@ -311,7 +312,7 @@ function CheckIcon(props) {
   );
 }
 
-function PlusIcon(props) {
+function PlusIcon(props: React.SVGProps<SVGSVGElement>) {
   return (
     <svg
       {...props}
@@ -353,3 +354,5 @@ const TrashIcon: React.FC<TrashIconProps> = ({ className = "h-6 w-6" }) => {
     </svg>
   );
 };
+
+export const runtime = "edge";

@@ -1,5 +1,7 @@
 "use client";
 
+export const runtime = "edge";
+
 import { useState } from "react";
 import { Card } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
@@ -145,7 +147,7 @@ export default function Login() {
             </p>
           ) : (
             <p>
-              Don't have an account?{" "}
+              Don&apos;t have an account?{" "}
               <button
                 type="button"
                 className="font-medium text-primary hover:underline"
