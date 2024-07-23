@@ -1,5 +1,6 @@
 "use client";
 import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
 import {
   Card,
   CardHeader,
@@ -38,13 +39,37 @@ export default function Home() {
   const [newHabitIcon, setNewHabitIcon] = useState("");
   const [newHabitTargetCount, setNewHabitTargetCount] = useState<number>(1);
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
+  const [streak, setStreak] = useState(0);
+  const [showAddForm, setShowAddForm] = useState(false);
   const supabase = createClientComponentClient();
+  const router = useRouter();
 
   useEffect(() => {
-    fetchHabits();
-    fetchCompletions();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    checkSession();
   }, []);
+
+  const checkSession = async () => {
+    const {
+      data: { session },
+    } = await supabase.auth.getSession();
+    if (!session) {
+      router.push("/login");
+    } else {
+      await Promise.all([fetchHabits(), fetchCompletions(), calculateStreak()]);
+    }
+  };
+
+  const handleLogout = async () => {
+    await supabase.auth.signOut();
+    router.push("/login");
+  };
+
+  const handleError = (error: any) => {
+    console.error("An error occurred:", error);
+    if (error.message === "JWT expired" || error.message?.includes("JWT")) {
+      router.push("/login");
+    }
+  };
 
   const fetchHabits = async () => {
     const { data, error } = await supabase
@@ -53,7 +78,7 @@ export default function Home() {
       .order("created_at", { ascending: true });
 
     if (error) {
-      console.error("Error fetching habits:", error);
+      handleError(error);
     } else {
       setHabits(data || []);
     }
@@ -65,9 +90,10 @@ export default function Home() {
 
     const {
       data: { user },
+      error: userError,
     } = await supabase.auth.getUser();
-    if (!user) {
-      console.error("User not authenticated");
+    if (userError) {
+      handleError(userError);
       return;
     }
 
@@ -75,7 +101,7 @@ export default function Home() {
       .from("habits")
       .insert([
         {
-          user_id: user.id,
+          user_id: user?.id,
           name: newHabitName,
           icon: newHabitIcon,
           target_count: newHabitTargetCount,
@@ -84,12 +110,13 @@ export default function Home() {
       .select();
 
     if (error) {
-      console.error("Error adding habit:", error);
+      handleError(error);
     } else if (data) {
       setHabits([...habits, data[0]]);
       setNewHabitName("");
       setNewHabitIcon("");
       setNewHabitTargetCount(1);
+      setShowAddForm(false);
     }
   };
 
@@ -102,11 +129,12 @@ export default function Home() {
     const { error } = await supabase.from("habits").delete().eq("id", id);
 
     if (error) {
-      console.error("Error deleting habit:", error);
+      handleError(error);
     } else {
       setHabits(habits.filter((habit) => habit.id !== id));
     }
   };
+
   const fetchCompletions = async () => {
     const today = new Date().toISOString().split("T")[0];
     const { data, error } = await supabase
@@ -115,11 +143,12 @@ export default function Home() {
       .eq("completion_date", today);
 
     if (error) {
-      console.error("Error fetching completions:", error);
+      handleError(error);
     } else {
       setCompletions(data || []);
     }
   };
+
   const incrementCompletion = async (habitId: string) => {
     const today = new Date().toISOString().split("T")[0];
     const { data: userData, error: userError } = await supabase.auth.getUser();
@@ -148,7 +177,7 @@ export default function Home() {
         .select();
 
       if (error) {
-        console.error("Error updating completion:", error);
+        handleError(error);
       } else if (data) {
         setCompletions(
           completions.map((c) => (c.id === data[0].id ? data[0] : c))
@@ -175,6 +204,60 @@ export default function Home() {
       }
     }
   };
+
+  const calculateStreak = async () => {
+    const { data: habitsData, error: habitsError } = await supabase
+      .from("habits")
+      .select("id, target_count");
+
+    if (habitsError) {
+      handleError(habitsError);
+      return;
+    }
+
+    const { data: completionsData, error: completionsError } = await supabase
+      .from("habit_completions")
+      .select("*")
+      .order("completion_date", { ascending: false });
+
+    if (completionsError) {
+      handleError(completionsError);
+      return;
+    }
+
+    let currentStreak = 0;
+    let currentDate = new Date();
+    currentDate.setHours(0, 0, 0, 0);
+
+    while (true) {
+      const dateString = currentDate.toISOString().split("T")[0];
+      const dayCompletions = completionsData.filter(
+        (c) => c.completion_date === dateString
+      );
+
+      const allHabitsCompleted = habitsData.every((habit) => {
+        const completion = dayCompletions.find((c) => c.habit_id === habit.id);
+        return completion && completion.count >= habit.target_count;
+      });
+
+      if (allHabitsCompleted) {
+        currentStreak++;
+        currentDate.setDate(currentDate.getDate() - 1);
+      } else {
+        break;
+      }
+    }
+
+    setStreak(currentStreak);
+  };
+
+  const allHabitsCompletedToday = () => {
+    return habits.every((habit) => {
+      const completionCount = getCompletionCount(habit.id);
+      return completionCount >= habit.target_count;
+    });
+  };
+
   const getCompletionCount = (habitId: string) => {
     const today = new Date().toISOString().split("T")[0];
     const completion = completions.find(
@@ -182,92 +265,134 @@ export default function Home() {
     );
     return completion ? completion.count : 0;
   };
+  const toggleAddForm = () => {
+    setShowAddForm(!showAddForm);
+    if (!showAddForm) {
+      // Reset form fields when opening the form
+      setNewHabitName("");
+      setNewHabitIcon("");
+      setNewHabitTargetCount(1);
+      setShowEmojiPicker(false);
+    }
+  };
 
   return (
-    <Card className="w-full max-w-md">
-      <CardHeader className="flex items-center justify-between">
-        <CardTitle className="text-2xl font-bold">Daily Habits</CardTitle>
-      </CardHeader>
-      <CardContent>
-        <div className="grid gap-4">
-          <div className="flex gap-2">
-            <Input
-              placeholder="New habit name"
-              value={newHabitName}
-              onChange={(e) => setNewHabitName(e.target.value)}
-            />
-            <div className="relative">
-              <Button
-                onClick={() => setShowEmojiPicker(!showEmojiPicker)}
-                variant="outline"
-              >
-                {newHabitIcon || "Select Icon"}
-              </Button>
-              {showEmojiPicker && (
-                <div className="absolute z-10 top-full mt-2">
-                  <EmojiPicker onEmojiClick={onEmojiClick} />
-                </div>
-              )}
-            </div>
-            <Input
-              type="number"
-              placeholder="Target count"
-              value={newHabitTargetCount}
-              onChange={(e) => setNewHabitTargetCount(Number(e.target.value))}
-              min={1}
-            />
-            <Button onClick={addHabit}>
-              <PlusIcon className="h-5 w-5" />
-              <span className="sr-only">Add Habit</span>
-            </Button>
-          </div>
-          {habits.map((habit) => (
-            <div
-              key={habit.id}
-              className="flex items-center justify-between bg-primary/10 rounded-md p-4"
-            >
-              <div className="flex items-center gap-3">
-                <div className="text-2xl">{habit.icon}</div>
-                <div>
-                  <div className="font-medium">{habit.name}</div>
-                  <div className="text-sm text-muted-foreground">
-                    Progress: {getCompletionCount(habit.id)} /{" "}
-                    {habit.target_count}
+    <div className="min-h-screen bg-gray-100 p-4">
+      <Card className="w-full max-w-md mx-auto mt-8">
+        <CardHeader className="flex items-center justify-between">
+          <CardTitle className="text-2xl font-bold">Daily Habits</CardTitle>
+          <Button onClick={toggleAddForm}>
+            {showAddForm ? "Cancel" : "Add Habit"}
+          </Button>
+          <Button onClick={handleLogout} variant="outline">
+            Logout
+          </Button>
+        </CardHeader>
+        <CardContent>
+          <div className="grid gap-4">
+            {showAddForm && (
+              <div className="grid gap-4">
+                <Input
+                  placeholder="New habit name"
+                  value={newHabitName}
+                  onChange={(e) => setNewHabitName(e.target.value)}
+                />
+                <div className="flex gap-2">
+                  <div className="relative flex-grow">
+                    <Button
+                      onClick={() => setShowEmojiPicker(!showEmojiPicker)}
+                      variant="outline"
+                      className="w-full"
+                    >
+                      {newHabitIcon || "Select Icon"}
+                    </Button>
+                    {showEmojiPicker && (
+                      <div className="absolute z-10 top-full mt-2">
+                        <EmojiPicker onEmojiClick={onEmojiClick} />
+                      </div>
+                    )}
                   </div>
-                  <div className="text-sm text-muted-foreground">
-                    Created: {new Date(habit.created_at).toLocaleDateString()}
-                  </div>
+                  <Input
+                    type="number"
+                    placeholder="Target count"
+                    value={newHabitTargetCount}
+                    onChange={(e) =>
+                      setNewHabitTargetCount(Number(e.target.value))
+                    }
+                    min={1}
+                    className="w-1/3"
+                  />
                 </div>
-              </div>
-              <div className="flex items-center gap-2">
                 <Button
-                  variant="ghost"
-                  size="icon"
-                  onClick={() => incrementCompletion(habit.id)}
+                  onClick={() => {
+                    addHabit();
+                    toggleAddForm();
+                  }}
                 >
-                  <CheckIcon className="h-6 w-6 text-primary" />
-                </Button>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  onClick={() => deleteHabit(habit.id)}
-                >
-                  <TrashIcon className="h-5 w-5 text-red-500" />
+                  <PlusIcon className="h-5 w-5 mr-2" />
+                  Add Habit
                 </Button>
               </div>
-            </div>
-          ))}
-        </div>
-      </CardContent>
-      <CardFooter className="flex flex-col items-start gap-2">
-        <div className="flex items-center gap-2 text-primary">
-          <CalendarIcon className="h-5 w-5" />
-          <div className="text-sm font-medium">
-            Congratulations! You have a 5-day streak.
+            )}
+            {habits.map((habit) => {
+              const completionCount = getCompletionCount(habit.id);
+              const isCompleted = completionCount >= habit.target_count;
+              return (
+                <div
+                  key={habit.id}
+                  className={`flex items-center justify-between rounded-md p-4 ${
+                    isCompleted ? "bg-primary/10" : "bg-white"
+                  }`}
+                >
+                  <div className="flex items-center gap-3">
+                    <div className="text-2xl">{habit.icon}</div>
+                    <div>
+                      <div className="font-medium">{habit.name}</div>
+                      <div className="text-sm text-muted-foreground">
+                        Progress: {completionCount} / {habit.target_count}
+                      </div>
+                      <div className="text-sm text-muted-foreground">
+                        Created:{" "}
+                        {new Date(habit.created_at).toLocaleDateString()}
+                      </div>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      onClick={() => {
+                        incrementCompletion(habit.id);
+                        calculateStreak();
+                      }}
+                    >
+                      <CheckIcon className="h-6 w-6 text-primary" />
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      onClick={() => deleteHabit(habit.id)}
+                    >
+                      <TrashIcon className="h-5 w-5 text-red-500" />
+                    </Button>
+                  </div>
+                </div>
+              );
+            })}
           </div>
-        </div>
-      </CardFooter>
-    </Card>
+        </CardContent>
+        {allHabitsCompletedToday() && (
+          <CardFooter className="flex flex-col items-start gap-2">
+            <div className="flex items-center gap-2 text-primary">
+              <CalendarIcon className="h-5 w-5" />
+              <div className="text-sm font-medium">
+                Congratulations! You have a {streak}-day streak.
+              </div>
+            </div>
+          </CardFooter>
+        )}
+      </Card>
+    </div>
   );
 }
 
