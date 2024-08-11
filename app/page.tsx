@@ -229,7 +229,9 @@ export default function Home() {
     let currentDate = new Date();
     currentDate.setHours(0, 0, 0, 0);
 
-    while (true) {
+    const maxDays = 365; // Set a maximum number of days to check (e.g., one year)
+
+    for (let i = 0; i < maxDays; i++) {
       const dateString = currentDate.toISOString().split("T")[0];
       const dayCompletions = completionsData.filter(
         (c) => c.completion_date === dateString
@@ -240,7 +242,7 @@ export default function Home() {
         return completion && completion.count >= habit.target_count;
       });
 
-      if (allHabitsCompleted) {
+      if (allHabitsCompleted && habitsData.length > 0) {
         currentStreak++;
         currentDate.setDate(currentDate.getDate() - 1);
       } else {
